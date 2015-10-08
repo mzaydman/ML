@@ -1,0 +1,124 @@
+#comparing network graphs
+
+
+
+rm(list = ls())
+
+library(plyr)
+library(reshape2)
+library(igraph)
+
+
+
+#read in data from one directory
+setwd("C:\\Users\\mzaydman\\Documents\\OJT Work\\OJT Sandy\\network\\network data")
+
+files = list.files()
+
+
+network_tab = data.frame()
+for(file in files){
+
+
+dat = read.csv(file)
+
+mentions = dat[,grep("^twitter_entities.user_mentions", names(dat), value=TRUE)]  #every mention is a different column and number of columns varies by files so need to do a search match strategy
+mentions = dat[,grep("screen_name", names(dat), value=TRUE)]
+user = dat$actor.preferredUsername
+in_reply = dat$inReplyTo.link
+in_reply = substr(in_reply, 20, length(in_reply))  #replies are coded to include a handle@twitter set up so grabbing just the reply handle
+
+in_reply =  sub("/.*", "", in_reply)
+
+date = as.Date(dat$actor.postedTime)  #clean up date field
+
+temp = cbind(user, in_reply, mentions, date ) 
+network_tab = rbind.fill(network_tab, temp) #rbind.fill allows for stacking data sets with different number of columns
+
+
+}
+
+
+#import the list of our total population of interest
+handles = read.csv("C:\\Users\\mzaydman\\Documents\\OJT Work\\OJT Sandy\\network\\handles list.csv")
+handles$Handles=gsub("[[:space:]]", "", handles$Handles)  #clean up white space and get rid of duplicates
+handles= unique(handles)
+
+
+
+#inefficently create the two data sets, first split info by date and then clean up the datasets
+#carrying over extra fields through a melt command is a pain so i did it this way with copy and pasting the same code twice
+
+network_tab2 = network_tab[which(network_tab$date < "2012-10-28"),]  #split data set as pre and post sandy
+network_tab2$date = NULL
+network_tab2 = melt(network_tab2, id.vars = "user") #reshape into long to create an edgelist
+network_tab3 = unique(network_tab2[,c("user", "value")])
+network_tab3[network_tab3==""] = NA  #get rid of weird artifacts
+network_tab3 = na.omit(network_tab3) 
+
+network_tab4 = network_tab3[network_tab3$user %in% handles$Handles, ]  #reduce data set to only ties of entities in our population of intrerest
+network_tab4 = network_tab4[network_tab4$value %in% handles$Handles, ]
+network_tab5 = merge(x = handles, y = network_tab4, by.x = "Handles", by.y = "user", all = TRUE) #make sure that every element of interest is present, important for doing correlation of networks where networks have to be of same size
+network_tab_before = as.matrix(network_tab5) #igraph likes matricies
+
+
+#repeat
+network_tab2 = network_tab[which(network_tab$date >= "2012-10-28"),]
+network_tab2$date = NULL
+network_tab2 = melt(network_tab2, id.vars = "user")
+network_tab3 = unique(network_tab2[,c("user", "value")])
+network_tab3[network_tab3==""] = NA
+network_tab3 = na.omit(network_tab3)
+
+network_tab4 = network_tab3[network_tab3$user %in% handles$Handles, ]
+network_tab4 = network_tab4[network_tab4$value %in% handles$Handles, ]
+network_tab5 = merge(x = handles, y = network_tab4, by.x = "Handles", by.y = "user", all = TRUE)
+network_tab_after = as.matrix(network_tab5)
+
+
+#begin graph work
+
+#turn edge list matrix into a graph object
+g_before = graph.data.frame(network_tab_before)
+g_after  = graph.data.frame(network_tab_after)
+
+
+#turn edge list object into adjacency matrix
+#NOTE: default is a sparse matrix, correlation statistic cant be computed with sparse matrix, makes sure the matrix is of the correct type
+adj_before2 = as_adj(g_before, sparse = FALSE)
+adj_after2  = as_adj(g_after, sparse = FALSE)
+
+
+#matricies must be homogenous so make order match. this is also why we added in all of our points of interest so that the matricies could be same size and order
+#temp difficulties with this
+#adj_after2<-adj_after2[row.names(adj_before2),colnames(adj_before2)]
+
+
+
+library(sna)
+
+
+#compute correlation between two networks 
+nl = netlogit(adj_before2, adj_after2, intercept = TRUE, mode = "graph", nullhyp = "qap", tol = 1e-7, reps = 100 )
+summary(nl)
+
+
+
+
+
+
+
+# layout1 <- layout.fruchterman.reingold(object)
+# plot(object, layout=layout1)
+ 
+ 
+bad.vs<-V(object)[degree(object)<5] #identify those vertices part of less than three edges
+bsk.network<-delete.vertices(object, bad.vs) #exclude them from the graph
+
+png(filename="C:\\Users\\mzaydman\\Documents\\OJT Work\\OJT Sandy\\network\\pre_sandy_network.png", height=800, width=600)
+plot(bsk.network, main = "Plot of pre-sandy network where at least 5 connections exist")
+dev.off()
+
+
+
+#write.csv(network_tab, file = "network_aug.csv", row.names = FALSE)
